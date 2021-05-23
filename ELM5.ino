@@ -3,11 +3,12 @@
 #include <BluetoothSerial.h>
 #include "esp_bt_main.h"
 #include "esp_bt_device.h"
-#include"esp_gap_bt_api.h"
+#include "esp_gap_bt_api.h"
 #include "esp_err.h"
 #include "FS.h"
 #include "SPIFFS.h"
 #include <Arduino_JSON.h>
+#include <arduino-timer.h>
 
 struct Config {
     String REMOVE_BONDED_DEVICES;
@@ -26,7 +27,10 @@ bool REMOVE_BONDED_DEVICES = false;
 uint32_t rpm = 0;
 float engineCoolantTemp = 0.000f;
 bool elmConnected = false;
-
+bool autoClearDtc = false;
+int autoClearCounter = 0;
+auto timer = timer_create_default();
+int timerTickInterval = 20000;
 
 bool loadConfiguration(fs::FS& fs, const char* path) {
     File file = fs.open(path);
@@ -77,7 +81,7 @@ void stickPrint(String inpt, bool rawValues = false) {
     M5.Lcd.setCursor(0, 0, 1);
     M5.Lcd.println("\r\n");
     M5.Lcd.setTextColor(TFT_YELLOW);
-    M5.Lcd.println("ELM DEVICE: " + String(elmConnected ? "CONNECTED" : "DISCONNECTED"));
+    M5.Lcd.println("ELM: " + String(elmConnected ? "CONNECTED" : "DISCONNECTED") + (autoClearDtc ? " | AUTO" : ""));
     M5.Lcd.setTextColor(TFT_GREEN);
     M5.Lcd.println("RPM: " + String(rpm));
     M5.Lcd.setTextColor(TFT_ORANGE);
@@ -86,7 +90,6 @@ void stickPrint(String inpt, bool rawValues = false) {
     M5.Lcd.setTextColor(TFT_MAGENTA);
     if (!rawValues) M5.Lcd.println(inpt);
 }
-
 
 bool initBluetooth()
 {
@@ -183,11 +186,23 @@ void elmConnect()
 
 }
 
+bool clearDTC(void *)
+{
+    if (autoClearDtc && elmConnected)
+    {
+        myELM327.sendCommand("04");
+        autoClearCounter++;
+        stickPrint(String("DTC CLEARED | COUNTER: ") + String(autoClearCounter));
+    }
+    return true;
+}
+
 void setup()
 {
     Serial.begin(115200);
     M5.begin();
     M5.Lcd.setRotation(3);
+    timer.every(timerTickInterval, clearDTC);
     if (!SPIFFS.begin(FORMAT_SPIFFS_IF_FAILED)) {
         Serial.println("SPIFFS Mount Failed");
         return;
@@ -226,8 +241,10 @@ void loop()
     }
     if (M5.BtnB.wasPressed())
     {
-        if(!elmConnected)
-            elmConnect();        
+        if (!elmConnected)
+            elmConnect();
+        else
+            autoClearDtc = !autoClearDtc;
     }
 
     if (elmConnected)
@@ -246,6 +263,6 @@ void loop()
             stickPrint("ERROR!");
         }
     }
+    timer.tick();
     delay(100);
 }
-
